@@ -14,3 +14,9 @@
 .glide/
 
 auth.json
+
+# Compiled hydroxide binary
+hydroxide
+
+# Claude Code project configuration
+CLAUDE.md

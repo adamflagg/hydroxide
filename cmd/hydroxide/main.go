@@ -16,7 +16,6 @@ import (
 	"github.com/ProtonMail/go-crypto/openpgp/armor"
 	imapserver "github.com/emersion/go-imap/server"
 	"github.com/emersion/go-mbox"
-	"github.com/emersion/go-smtp"
 	"golang.org/x/term"
 
 	"github.com/emersion/hydroxide/auth"
@@ -27,7 +26,6 @@ import (
 	imapbackend "github.com/emersion/hydroxide/imap"
 	"github.com/emersion/hydroxide/imports"
 	"github.com/emersion/hydroxide/protonmail"
-	smtpbackend "github.com/emersion/hydroxide/smtp"
 )
 
 const (
@@ -82,25 +80,6 @@ func askBridgePass() (string, error) {
 	return string(b), err
 }
 
-func listenAndServeSMTP(addr string, debug bool, authManager *auth.Manager, tlsConfig *tls.Config) error {
-	be := smtpbackend.New(authManager)
-	s := smtp.NewServer(be)
-	s.Addr = addr
-	s.Domain = "localhost" // TODO: make this configurable
-	s.AllowInsecureAuth = tlsConfig == nil
-	s.TLSConfig = tlsConfig
-	if debug {
-		s.Debug = os.Stdout
-	}
-
-	if s.TLSConfig != nil {
-		log.Println("SMTP server listening with TLS on", s.Addr)
-		return s.ListenAndServeTLS()
-	}
-
-	log.Println("SMTP server listening on", s.Addr)
-	return s.ListenAndServe()
-}
 
 func listenAndServeIMAP(addr string, debug bool, authManager *auth.Manager, eventsManager *events.Manager, tlsConfig *tls.Config) error {
 	be := imapbackend.New(authManager, eventsManager)
@@ -207,7 +186,6 @@ Commands:
 	export-messages [options...] <username>	Export messages
 	sendmail <username> -- <args...>	sendmail(1) interface
 	serve			Run all servers
-	smtp			Run hydroxide as an SMTP server
 	status			View hydroxide status
 
 Global options:
@@ -217,22 +195,15 @@ Global options:
 		ProtonMail API endpoint
 	-app-version <version>
 		ProtonMail application version
-	-smtp-host example.com
-		Allowed SMTP email hostname on which hydroxide listens, defaults to 127.0.0.1
 	-imap-host example.com
 		Allowed IMAP email hostname on which hydroxide listens, defaults to 127.0.0.1
 	-carddav-host example.com
-		Allowed SMTP email hostname on which hydroxide listens, defaults to 127.0.0.1
-	-smtp-port example.com
-		SMTP port on which hydroxide listens, defaults to 1025
 	-imap-port example.com
 		IMAP port on which hydroxide listens, defaults to 1143
 	-carddav-port example.com
 		CardDAV port on which hydroxide listens, defaults to 8080
 	-disable-imap
 		Disable IMAP for hydroxide serve
-	-disable-smtp
-		Disable SMTP for hydroxide serve
 	-disable-carddav
 		Disable CardDAV for hydroxide serve
 	-tls-cert /path/to/cert.pem
@@ -251,9 +222,6 @@ func main() {
 	flag.StringVar(&apiEndpoint, "api-endpoint", defaultAPIEndpoint, "ProtonMail API endpoint")
 	flag.StringVar(&appVersion, "app-version", defaultAppVersion, "ProtonMail app version")
 
-	smtpHost := flag.String("smtp-host", "127.0.0.1", "Allowed SMTP email hostname on which hydroxide listens, defaults to 127.0.0.1")
-	smtpPort := flag.String("smtp-port", "1025", "SMTP port on which hydroxide listens, defaults to 1025")
-	disableSMTP := flag.Bool("disable-smtp", false, "Disable SMTP for hydroxide serve")
 
 	imapHost := flag.String("imap-host", "127.0.0.1", "Allowed IMAP email hostname on which hydroxide listens, defaults to 127.0.0.1")
 	imapPort := flag.String("imap-port", "1143", "IMAP port on which hydroxide listens, defaults to 1143")
@@ -271,7 +239,6 @@ func main() {
 	exportSecretKeysCmd := flag.NewFlagSet("export-secret-keys", flag.ExitOnError)
 	importMessagesCmd := flag.NewFlagSet("import-messages", flag.ExitOnError)
 	exportMessagesCmd := flag.NewFlagSet("export-messages", flag.ExitOnError)
-	sendmailCmd := flag.NewFlagSet("sendmail", flag.ExitOnError)
 
 	flag.Usage = func() {
 		fmt.Print(usage)
@@ -513,10 +480,6 @@ func main() {
 		if err := mboxWriter.Close(); err != nil {
 			log.Fatal(err)
 		}
-	case "smtp":
-		addr := *smtpHost + ":" + *smtpPort
-		authManager := auth.NewManager(newClient)
-		log.Fatal(listenAndServeSMTP(addr, debug, authManager, tlsConfig))
 	case "imap":
 		addr := *imapHost + ":" + *imapPort
 		authManager := auth.NewManager(newClient)
@@ -528,19 +491,13 @@ func main() {
 		eventsManager := events.NewManager()
 		log.Fatal(listenAndServeCardDAV(addr, authManager, eventsManager, tlsConfig))
 	case "serve":
-		smtpAddr := *smtpHost + ":" + *smtpPort
 		imapAddr := *imapHost + ":" + *imapPort
 		carddavAddr := *carddavHost + ":" + *carddavPort
 
 		authManager := auth.NewManager(newClient)
 		eventsManager := events.NewManager()
 
-		done := make(chan error, 3)
-		if !*disableSMTP {
-			go func() {
-				done <- listenAndServeSMTP(smtpAddr, debug, authManager, tlsConfig)
-			}()
-		}
+		done := make(chan error, 2)
 		if !*disableIMAP {
 			go func() {
 				done <- listenAndServeIMAP(imapAddr, debug, authManager, eventsManager, tlsConfig)
@@ -553,41 +510,8 @@ func main() {
 		}
 		log.Fatal(<-done)
 	case "sendmail":
-		username := flag.Arg(1)
-		if username == "" || flag.Arg(2) != "--" {
-			log.Fatal("usage: hydroxide sendmail <username> -- <args...>")
-		}
-
-		// TODO: other sendmail flags
-		var dotEOF bool
-		sendmailCmd.BoolVar(&dotEOF, "i", false, "don't treat a line with only a . character as the end of input")
-		sendmailCmd.Parse(flag.Args()[3:])
-		rcpt := sendmailCmd.Args()
-
-		bridgePassword, err := askBridgePass()
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		c, privateKeys, _, err := auth.NewManager(newClient).Auth(username, bridgePassword)
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		u, err := c.GetCurrentUser()
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		addrs, err := c.ListAddresses()
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		err = smtpbackend.SendMail(c, u, privateKeys, addrs, rcpt, os.Stdin)
-		if err != nil {
-			log.Fatal(err)
-		}
+		// SendMail functionality removed - SMTP support discontinued
+		log.Fatal("sendmail command is no longer supported - SMTP functionality has been removed")
 	default:
 		fmt.Print(usage)
 		if cmd != "help" {
