@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/ProtonMail/go-crypto/openpgp"
 	"github.com/ProtonMail/go-crypto/openpgp/armor"
@@ -41,10 +42,16 @@ var (
 )
 
 func newClient() *protonmail.Client {
+	// Create HTTP client with 30 second timeout to prevent hanging
+	httpClient := &http.Client{
+		Timeout: 30 * time.Second,
+	}
+	
 	return &protonmail.Client{
 		RootURL:    apiEndpoint,
 		AppVersion: appVersion,
 		Debug:      debug,
+		HTTPClient: httpClient,
 	}
 }
 
@@ -114,6 +121,8 @@ func listenAndServeIMAP(addr string, debug bool, authManager *auth.Manager, even
 	return s.ListenAndServe()
 }
 
+
+
 func listenAndServeCardDAV(addr string, authManager *auth.Manager, eventsManager *events.Manager, tlsConfig *tls.Config) error {
 	handlers := make(map[string]http.Handler)
 
@@ -121,17 +130,31 @@ func listenAndServeCardDAV(addr string, authManager *auth.Manager, eventsManager
 		Addr:      addr,
 		TLSConfig: tlsConfig,
 		Handler: http.HandlerFunc(func(resp http.ResponseWriter, req *http.Request) {
+			// Log incoming requests
+			log.Printf("debug: CardDAV request: %s %s (Content-Length: %d)", req.Method, req.URL.Path, req.ContentLength)
+			
+			// Handle .well-known/carddav redirect
+			if req.URL.Path == "/.well-known/carddav" {
+				log.Printf("debug: Redirecting .well-known/carddav to /contacts/default/")
+				resp.Header().Set("Location", "/contacts/default/")
+				resp.WriteHeader(http.StatusMovedPermanently)
+				return
+			}
+
 			resp.Header().Set("WWW-Authenticate", "Basic")
 
 			username, password, ok := req.BasicAuth()
 			if !ok {
+				log.Printf("debug: No basic auth credentials provided")
 				resp.WriteHeader(http.StatusUnauthorized)
 				io.WriteString(resp, "Credentials are required")
 				return
 			}
 
-			c, privateKeys, err := authManager.Auth(username, password)
+			log.Printf("debug: Authenticating user: %s", username)
+			c, privateKeys, primaryKeyID, err := authManager.Auth(username, password)
 			if err != nil {
+				log.Printf("debug: Authentication failed for %s: %v", username, err)
 				if err == auth.ErrUnauthorized {
 					resp.WriteHeader(http.StatusUnauthorized)
 				} else {
@@ -143,13 +166,15 @@ func listenAndServeCardDAV(addr string, authManager *auth.Manager, eventsManager
 
 			h, ok := handlers[username]
 			if !ok {
+				log.Printf("debug: Creating new handler for user %s", username)
 				ch := make(chan *protonmail.Event)
 				eventsManager.Register(c, username, ch, nil)
-				h = carddav.NewHandler(c, privateKeys, ch)
+				h = carddav.NewHandler(c, privateKeys, primaryKeyID, ch)
 
 				handlers[username] = h
 			}
 
+			log.Printf("debug: Passing request to CardDAV handler for user %s", username)
 			h.ServeHTTP(resp, req)
 		}),
 	}
@@ -337,7 +362,7 @@ func main() {
 			log.Fatal(err)
 		}
 
-		_, err = c.Unlock(a, keySalts, mailboxPassword)
+		_, _, err = c.Unlock(a, keySalts, mailboxPassword)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -384,7 +409,7 @@ func main() {
 			log.Fatal(err)
 		}
 
-		_, privateKeys, err := auth.NewManager(newClient).Auth(username, bridgePassword)
+		_, privateKeys, _, err := auth.NewManager(newClient).Auth(username, bridgePassword)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -425,7 +450,7 @@ func main() {
 			log.Fatal(err)
 		}
 
-		c, _, err := auth.NewManager(newClient).Auth(username, bridgePassword)
+		c, _, _, err := auth.NewManager(newClient).Auth(username, bridgePassword)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -467,7 +492,7 @@ func main() {
 			log.Fatal(err)
 		}
 
-		c, privateKeys, err := auth.NewManager(newClient).Auth(username, bridgePassword)
+		c, privateKeys, _, err := auth.NewManager(newClient).Auth(username, bridgePassword)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -544,7 +569,7 @@ func main() {
 			log.Fatal(err)
 		}
 
-		c, privateKeys, err := auth.NewManager(newClient).Auth(username, bridgePassword)
+		c, privateKeys, _, err := auth.NewManager(newClient).Auth(username, bridgePassword)
 		if err != nil {
 			log.Fatal(err)
 		}

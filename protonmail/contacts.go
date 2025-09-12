@@ -3,6 +3,7 @@ package protonmail
 import (
 	"bytes"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -188,11 +189,22 @@ func (card *ContactCard) Read(keyring openpgp.KeyRing) (*openpgp.MessageDetails,
 
 	ciphertextBlock, err := armor.Decode(strings.NewReader(card.Data))
 	if err != nil {
+		log.Printf("debug: ContactCard.Read: failed to decode armor: %v", err)
 		return nil, err
+	}
+
+	// Log available keys in keyring for debugging
+	if keyList, ok := keyring.(openpgp.EntityList); ok {
+		log.Printf("debug: ContactCard.Read: trying to decrypt with %d keys", len(keyList))
+		for i, entity := range keyList {
+			log.Printf("debug:   key %d: algorithm=%s, keyid=%X", 
+				i, entity.PrimaryKey.PubKeyAlgo, entity.PrimaryKey.KeyId)
+		}
 	}
 
 	md, err := openpgp.ReadMessage(ciphertextBlock.Body, keyring, nil, nil)
 	if err != nil {
+		log.Printf("debug: ContactCard.Read: ReadMessage failed: %v", err)
 		return nil, err
 	}
 

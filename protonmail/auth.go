@@ -306,10 +306,17 @@ func unlockPrivateKey(key *PrivateKey, userKeyRing openpgp.EntityList, keySalt [
 	return entity, nil
 }
 
-func unlockKeyRing(keys []*PrivateKey, userKeyRing openpgp.EntityList, keySalts map[string][]byte, passphraseBytes []byte) (openpgp.EntityList, error) {
+func unlockKeyRing(keys []*PrivateKey, userKeyRing openpgp.EntityList, keySalts map[string][]byte, passphraseBytes []byte) (openpgp.EntityList, uint64, error) {
 	var keyRing openpgp.EntityList
+	var primaryKeyID uint64
+	log.Printf("debug: unlockKeyRing called with %d keys", len(keys))
+	
 	for _, key := range keys {
+		log.Printf("debug: processing key ID=%s, Fingerprint=%s, Active=%d, Primary=%d", 
+			key.ID, key.Fingerprint, key.Active, key.Primary)
+		
 		if key.Active != 1 {
+			log.Printf("debug: skipping inactive key %s", key.Fingerprint)
 			continue
 		}
 
@@ -319,52 +326,84 @@ func unlockKeyRing(keys []*PrivateKey, userKeyRing openpgp.EntityList, keySalts 
 			continue
 		}
 
+		// Log the key algorithm type
+		log.Printf("debug: successfully unlocked key %s, algorithm=%s (code=%d)", 
+			key.Fingerprint, entity.PrimaryKey.PubKeyAlgo, entity.PrimaryKey.PubKeyAlgo)
+
+		// Track the primary key
+		if key.Primary == 1 {
+			primaryKeyID = entity.PrimaryKey.KeyId
+			log.Printf("debug: identified primary key: ID=%s, KeyId=%X", key.ID, primaryKeyID)
+		}
+
 		keyRing = append(keyRing, entity)
 	}
 
 	if len(keyRing) == 0 {
-		return nil, fmt.Errorf("failed to unlock any key")
+		return nil, 0, fmt.Errorf("failed to unlock any key")
 	}
-	return keyRing, nil
+	log.Printf("debug: unlockKeyRing returning %d keys, primaryKeyID=%X", len(keyRing), primaryKeyID)
+	return keyRing, primaryKeyID, nil
 }
 
-func (c *Client) Unlock(auth *Auth, keySalts map[string][]byte, passphrase string) (openpgp.EntityList, error) {
+func (c *Client) Unlock(auth *Auth, keySalts map[string][]byte, passphrase string) (openpgp.EntityList, uint64, error) {
 	c.uid = auth.UID
 	c.accessToken = auth.AccessToken
 
 	u, err := c.GetCurrentUser()
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
-	userKeyRing, err := unlockKeyRing(u.Keys, nil, keySalts, []byte(passphrase))
+	log.Printf("debug: unlocking %d user keys", len(u.Keys))
+	userKeyRing, primaryKeyID, err := unlockKeyRing(u.Keys, nil, keySalts, []byte(passphrase))
 	if err != nil {
-		return nil, err
+		return nil, 0, err
+	}
+	log.Printf("debug: unlocked %d user keys successfully, primary key ID: %X", len(userKeyRing), primaryKeyID)
+
+	// Log key types in user keyring
+	for i, entity := range userKeyRing {
+		log.Printf("debug: user key %d: algorithm=%s, keyid=%X", 
+			i, entity.PrimaryKey.PubKeyAlgo, entity.PrimaryKey.KeyId)
 	}
 
 	addrs, err := c.ListAddresses()
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
+	// Start with user keys, not empty list
 	var keyRing openpgp.EntityList
+	keyRing = append(keyRing, userKeyRing...)
+	log.Printf("debug: starting with %d user keys in keyring", len(userKeyRing))
+
 	for _, addr := range addrs {
-		addrKeyRing, err := unlockKeyRing(addr.Keys, userKeyRing, keySalts, []byte(passphrase))
+		log.Printf("debug: unlocking keys for address <%v> (%d keys)", addr.Email, len(addr.Keys))
+		addrKeyRing, _, err := unlockKeyRing(addr.Keys, userKeyRing, keySalts, []byte(passphrase))
 		if err != nil {
 			log.Printf("warning: failed to unlock address <%v>: %v", addr.Email, err)
 			continue
+		}
+		log.Printf("debug: unlocked %d keys for address <%v>", len(addrKeyRing), addr.Email)
+		
+		// Log key types in address keyring
+		for i, entity := range addrKeyRing {
+			log.Printf("debug: address %s key %d: algorithm=%s, keyid=%X", 
+				addr.Email, i, entity.PrimaryKey.PubKeyAlgo, entity.PrimaryKey.KeyId)
 		}
 
 		keyRing = append(keyRing, addrKeyRing...)
 	}
 
 	if len(keyRing) == 0 {
-		return nil, fmt.Errorf("failed to unlock any key")
+		return nil, 0, fmt.Errorf("failed to unlock any key")
 	}
 
+	log.Printf("debug: total keys in final keyring: %d", len(keyRing))
 	c.keyRing = keyRing
 
-	return keyRing, nil
+	return keyRing, primaryKeyID, nil
 }
 
 func (c *Client) Logout() error {
