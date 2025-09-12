@@ -123,13 +123,12 @@ func formatAddressObjectPath(id string) string {
 func (b *backend) toAddressObject(contact *protonmail.Contact, req *carddav.AddressDataRequest) (*carddav.AddressObject, error) {
 	// TODO: handle req
 
-	log.Printf("debug: toAddressObject for contact ID=%s with %d cards", contact.ID, len(contact.Cards))
-	log.Printf("debug: using %d private keys for decryption", len(b.privateKeys))
+	// Reduced logging - only log on errors or unusual cases
 	
 	card := make(vcard.Card)
 	for i, c := range contact.Cards {
-		log.Printf("debug: processing card %d/%d for contact %s", i+1, len(contact.Cards), contact.ID)
-		md, err := c.Read(b.privateKeys)
+		// Use optimized keyring with only main account key for CardDAV
+		md, err := c.Read(b.cardDAVKeyring)
 		if err != nil {
 			log.Printf("error: failed to decrypt card %d for contact %s: %v", i+1, contact.ID, err)
 			return nil, err
@@ -154,7 +153,7 @@ func (b *backend) toAddressObject(contact *protonmail.Contact, req *carddav.Addr
 				card.Add(k, f)
 			}
 		}
-		log.Printf("debug: successfully processed card %d for contact %s", i+1, contact.ID)
+		// Card processed successfully - no need to log unless debugging specific issues
 	}
 
 	return &carddav.AddressObject{
@@ -173,6 +172,7 @@ type backend struct {
 	total          int
 	privateKeys    openpgp.EntityList
 	mainAccountKey *openpgp.Entity
+	cardDAVKeyring openpgp.EntityList // Optimized keyring with only main account key
 }
 
 func (b *backend) CurrentUserPrincipal(ctx context.Context) (string, error) {
@@ -551,12 +551,17 @@ func NewHandler(c *protonmail.Client, privateKeys openpgp.EntityList, primaryKey
 	log.Printf("debug: CardDAV will use main account key: algorithm=%s (code=%d), keyid=%X for contact encryption", 
 		mainAccountKey.PrimaryKey.PubKeyAlgo, mainAccountKey.PrimaryKey.PubKeyAlgo, mainAccountKey.PrimaryKey.KeyId)
 
+	// Create optimized keyring with only the main account key for CardDAV operations
+	cardDAVKeyring := openpgp.EntityList{mainAccountKey}
+	log.Printf("debug: CardDAV optimized keyring created with 1 key (reduced from %d keys)", len(privateKeys))
+
 	b := &backend{
 		c:              c,
 		cache:          make(map[string]*protonmail.Contact),
 		total:          -1,
 		privateKeys:    privateKeys,
 		mainAccountKey: mainAccountKey,
+		cardDAVKeyring: cardDAVKeyring,
 	}
 
 	if events != nil {

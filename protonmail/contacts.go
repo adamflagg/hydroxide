@@ -193,13 +193,10 @@ func (card *ContactCard) Read(keyring openpgp.KeyRing) (*openpgp.MessageDetails,
 		return nil, err
 	}
 
-	// Log available keys in keyring for debugging
-	if keyList, ok := keyring.(openpgp.EntityList); ok {
-		log.Printf("debug: ContactCard.Read: trying to decrypt with %d keys", len(keyList))
-		for i, entity := range keyList {
-			log.Printf("debug:   key %d: algorithm=%s, keyid=%X", 
-				i, entity.PrimaryKey.PubKeyAlgo, entity.PrimaryKey.KeyId)
-		}
+	// Only log key count, not individual keys to reduce verbosity
+	if keyList, ok := keyring.(openpgp.EntityList); ok && len(keyList) > 0 {
+		// Minimal logging - just the count
+		// log.Printf("debug: ContactCard.Read: attempting decryption with %d keys", len(keyList))
 	}
 
 	md, err := openpgp.ReadMessage(ciphertextBlock.Body, keyring, nil, nil)
