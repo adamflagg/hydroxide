@@ -3,7 +3,7 @@
 A third-party, open-source ProtonMail bridge. For power users only, designed to
 run on a server.
 
-hydroxide supports CardDAV and IMAP.
+hydroxide supports CardDAV, with plans for CalDAV support.
 
 Rationale:
 
@@ -15,13 +15,13 @@ Feel free to join the IRC channel: #emersion on Libera Chat.
 
 ## How does it work?
 
-hydroxide is a server that translates standard protocols (IMAP, CardDAV)
-into ProtonMail API requests. It allows you to use your preferred e-mail clients
+hydroxide is a server that translates standard protocols (CardDAV)
+into ProtonMail API requests. It allows you to use your preferred contacts clients
 with ProtonMail.
 
     +-----------------+             +-------------+  ProtonMail  +--------------+
-    |                 | IMAP        |             |     API      |              |
-    |  E-mail client  <------------->  hydroxide  <-------------->  ProtonMail  |
+    |                 | CardDAV     |             |     API      |              |
+    | Contacts client <------------->  hydroxide  <-------------->  ProtonMail  |
     |                 |             |             |              |              |
     +-----------------+             +-------------+              +--------------+
 
@@ -60,7 +60,7 @@ password (a 32-byte random password generated when logging in).
 hydroxide can be used in multiple modes.
 
 > Don't start hydroxide multiple times, instead you can use `hydroxide serve`.
-> This requires ports 1143 (imap) and 8080 (carddav).
+> This requires port 8080 (carddav).
 
 ### CardDAV
 
@@ -72,15 +72,6 @@ hydroxide carddav
 
 Tested on GNOME (Evolution) and Android (DAVDroid).
 
-### IMAP
-
-⚠️  **Warning**: IMAP support is work-in-progress. Here be dragons.
-
-For now, it only supports unencrypted local connections.
-
-```shell
-hydroxide imap
-```
 
 ## License
 

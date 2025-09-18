@@ -149,7 +149,6 @@ Commands:
 	auth <username>		Login to ProtonMail via hydroxide
 	carddav			Run hydroxide as a CardDAV server
 	export-secret-keys <username> Export secret keys
-	sendmail <username> -- <args...>	sendmail(1) interface
 	serve			Run all servers
 	status			View hydroxide status
 
@@ -365,9 +364,6 @@ func main() {
 		} else {
 			log.Fatal("CardDAV is disabled - no services to run")
 		}
-	case "sendmail":
-		// SendMail functionality removed - SMTP support discontinued
-		log.Fatal("sendmail command is no longer supported - SMTP functionality has been removed")
 	default:
 		fmt.Print(usage)
 		if cmd != "help" {
