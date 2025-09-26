@@ -56,12 +56,33 @@ func formatCard(card vcard.Card, privateKey *openpgp.Entity) (*protonmail.Contac
 		card.Add(vcard.FieldUID, &vcard.Field{Value: uid})
 	}
 
-	// Add groups to emails
-	i := 1
+	// Add groups to emails - ensure each email has a unique group
+	// First, collect all existing group numbers to avoid collisions
+	existingGroups := make(map[string]bool)
+	for _, fields := range card {
+		for _, field := range fields {
+			if field.Group != "" && strings.HasPrefix(field.Group, "item") {
+				existingGroups[field.Group] = true
+			}
+		}
+	}
+
+	// Find the next available item number
+	nextItemNum := 1
+	for {
+		groupName := "item" + strconv.Itoa(nextItemNum)
+		if !existingGroups[groupName] {
+			break
+		}
+		nextItemNum++
+	}
+
+	// Assign groups to emails that don't have them
 	for _, email := range card[vcard.FieldEmail] {
 		if email.Group == "" {
-			email.Group = "item" + strconv.Itoa(i)
-			i++
+			email.Group = "item" + strconv.Itoa(nextItemNum)
+			existingGroups[email.Group] = true
+			nextItemNum++
 		}
 	}
 
