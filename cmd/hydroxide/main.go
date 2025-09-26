@@ -19,6 +19,7 @@ import (
 	"github.com/emersion/hydroxide/carddav"
 	"github.com/emersion/hydroxide/config"
 	"github.com/emersion/hydroxide/events"
+	"github.com/emersion/hydroxide/logger"
 	"github.com/emersion/hydroxide/protonmail"
 )
 
@@ -86,11 +87,11 @@ func listenAndServeCardDAV(addr string, authManager *auth.Manager, eventsManager
 		TLSConfig: tlsConfig,
 		Handler: http.HandlerFunc(func(resp http.ResponseWriter, req *http.Request) {
 			// Log incoming requests
-			log.Printf("debug: CardDAV request: %s %s (Content-Length: %d)", req.Method, req.URL.Path, req.ContentLength)
+			logger.Debug("CardDAV request: %s %s (Content-Length: %d)", req.Method, req.URL.Path, req.ContentLength)
 			
 			// Handle .well-known/carddav redirect
 			if req.URL.Path == "/.well-known/carddav" {
-				log.Printf("debug: Redirecting .well-known/carddav to /contacts/default/")
+				logger.Debug("Redirecting .well-known/carddav to /contacts/default/")
 				resp.Header().Set("Location", "/contacts/default/")
 				resp.WriteHeader(http.StatusMovedPermanently)
 				return
@@ -100,16 +101,16 @@ func listenAndServeCardDAV(addr string, authManager *auth.Manager, eventsManager
 
 			username, password, ok := req.BasicAuth()
 			if !ok {
-				log.Printf("debug: No basic auth credentials provided")
+				logger.Debug("No basic auth credentials provided")
 				resp.WriteHeader(http.StatusUnauthorized)
 				io.WriteString(resp, "Credentials are required")
 				return
 			}
 
-			log.Printf("debug: Authenticating user: %s", username)
+			logger.Debug("Authenticating user: %s", username)
 			c, privateKeys, primaryKeyID, err := authManager.Auth(username, password)
 			if err != nil {
-				log.Printf("debug: Authentication failed for %s: %v", username, err)
+				logger.Debug("Authentication failed for %s: %v", username, err)
 				if err == auth.ErrUnauthorized {
 					resp.WriteHeader(http.StatusUnauthorized)
 				} else {
@@ -121,7 +122,7 @@ func listenAndServeCardDAV(addr string, authManager *auth.Manager, eventsManager
 
 			h, ok := handlers[username]
 			if !ok {
-				log.Printf("debug: Creating new handler for user %s", username)
+				logger.Debug("Creating new handler for user %s", username)
 				ch := make(chan *protonmail.Event)
 				eventsManager.Register(c, username, ch, nil)
 				h = carddav.NewHandler(c, privateKeys, primaryKeyID, ch)
@@ -129,7 +130,7 @@ func listenAndServeCardDAV(addr string, authManager *auth.Manager, eventsManager
 				handlers[username] = h
 			}
 
-			log.Printf("debug: Passing request to CardDAV handler for user %s", username)
+			logger.Debug("Passing request to CardDAV handler for user %s", username)
 			h.ServeHTTP(resp, req)
 		}),
 	}
@@ -198,6 +199,8 @@ func main() {
 	}
 
 	flag.Parse()
+
+	logger.SetDebug(debug)
 
 	tlsConfig, err := config.TLS(*tlsCert, *tlsCertKey, *tlsClientCA)
 	if err != nil {

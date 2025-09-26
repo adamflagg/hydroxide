@@ -3,7 +3,6 @@ package protonmail
 import (
 	"bytes"
 	"io"
-	"log"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -11,6 +10,7 @@ import (
 
 	"github.com/ProtonMail/go-crypto/openpgp"
 	"github.com/ProtonMail/go-crypto/openpgp/armor"
+	"github.com/emersion/hydroxide/logger"
 )
 
 type Contact struct {
@@ -189,19 +189,19 @@ func (card *ContactCard) Read(keyring openpgp.KeyRing) (*openpgp.MessageDetails,
 
 	ciphertextBlock, err := armor.Decode(strings.NewReader(card.Data))
 	if err != nil {
-		log.Printf("debug: ContactCard.Read: failed to decode armor: %v", err)
+		logger.Debug("ContactCard.Read: failed to decode armor: %v", err)
 		return nil, err
 	}
 
 	// Only log key count, not individual keys to reduce verbosity
 	if keyList, ok := keyring.(openpgp.EntityList); ok && len(keyList) > 0 {
 		// Minimal logging - just the count
-		// log.Printf("debug: ContactCard.Read: attempting decryption with %d keys", len(keyList))
+		// logger.Debug("ContactCard.Read: attempting decryption with %d keys", len(keyList))
 	}
 
 	md, err := openpgp.ReadMessage(ciphertextBlock.Body, keyring, nil, nil)
 	if err != nil {
-		log.Printf("debug: ContactCard.Read: ReadMessage failed: %v", err)
+		logger.Debug("ContactCard.Read: ReadMessage failed: %v", err)
 		return nil, err
 	}
 

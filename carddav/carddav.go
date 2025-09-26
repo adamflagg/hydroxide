@@ -20,6 +20,7 @@ import (
 	"github.com/emersion/go-vcard"
 	"github.com/emersion/go-webdav"
 	"github.com/emersion/go-webdav/carddav"
+	"github.com/emersion/hydroxide/logger"
 	"github.com/emersion/hydroxide/protonmail"
 )
 
@@ -52,7 +53,7 @@ func formatCard(card vcard.Card, privateKey *openpgp.Entity) (*protonmail.Contac
 	// Ensure the card has a UID, generate one if missing
 	if _, hasUID := card[vcard.FieldUID]; !hasUID {
 		uid := generateUID()
-		log.Printf("debug: Generated UID for contact: %s", uid)
+		logger.Debug("Generated UID for contact: %s", uid)
 		card.Add(vcard.FieldUID, &vcard.Field{Value: uid})
 	}
 
@@ -197,12 +198,12 @@ type backend struct {
 }
 
 func (b *backend) CurrentUserPrincipal(ctx context.Context) (string, error) {
-	log.Printf("debug: CurrentUserPrincipal called, returning '/principal/'")
+	logger.Debug("CurrentUserPrincipal called, returning '/principal/'")
 	return "/principal/", nil
 }
 
 func (b *backend) AddressBookHomeSetPath(ctx context.Context) (string, error) {
-	log.Printf("debug: AddressBookHomeSetPath called, returning '/principal/contacts/'")
+	logger.Debug("AddressBookHomeSetPath called, returning '/principal/contacts/'")
 	return "/principal/contacts/", nil
 }
 
@@ -215,23 +216,23 @@ func (b *backend) DeleteAddressBook(ctx context.Context, path string) error {
 }
 
 func (b *backend) ListAddressBooks(ctx context.Context) ([]carddav.AddressBook, error) {
-	log.Printf("debug: ListAddressBooks called")
+	logger.Debug("ListAddressBooks called")
 	return []carddav.AddressBook{*addressBook}, nil
 }
 
 func (b *backend) GetAddressBook(ctx context.Context, reqPath string) (*carddav.AddressBook, error) {
-	log.Printf("debug: GetAddressBook called for path: %s", reqPath)
+	logger.Debug("GetAddressBook called for path: %s", reqPath)
 	
 	// Clean the path
 	cleanPath := path.Clean(reqPath)
 	
 	// Handle both canonical and non-canonical collection paths for WebDAV compatibility
 	if cleanPath == "/principal/contacts/default" || cleanPath == "/principal/contacts/default/" {
-		log.Printf("debug: Address book found, returning addressBook")
+		logger.Debug("Address book found, returning addressBook")
 		return addressBook, nil
 	}
 	
-	log.Printf("debug: Address book not found for path: %s", cleanPath)
+	logger.Debug("Address book not found for path: %s", cleanPath)
 	return nil, webdav.NewHTTPError(http.StatusNotFound, errors.New("address book not found"))
 }
 
@@ -285,14 +286,14 @@ func (b *backend) GetAddressObject(ctx context.Context, path string, req *cardda
 }
 
 func (b *backend) ListAddressObjects(ctx context.Context, path string, req *carddav.AddressDataRequest) ([]carddav.AddressObject, error) {
-	log.Printf("debug: ListAddressObjects called for path: %s", path)
+	logger.Debug("ListAddressObjects called for path: %s", path)
 	
 	// Add timeout to prevent hanging on network issues
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	
 	if b.cacheComplete() {
-		log.Printf("debug: Using cached contacts (%d items)", len(b.cache))
+		logger.Debug("Using cached contacts (%d items)", len(b.cache))
 		b.locker.Lock()
 		defer b.locker.Unlock()
 
@@ -306,13 +307,13 @@ func (b *backend) ListAddressObjects(ctx context.Context, path string, req *card
 			aos = append(aos, *ao)
 		}
 
-		log.Printf("debug: Returning %d cached address objects", len(aos))
+		logger.Debug("Returning %d cached address objects", len(aos))
 		return aos, nil
 	}
 
 	// Get a list of all contacts
 	// TODO: paging support
-	log.Printf("debug: Fetching contact list from server...")
+	logger.Debug("Fetching contact list from server...")
 	total, contacts, err := b.c.ListContacts(0, 0)
 	if err != nil {
 		// Check if this was a timeout
@@ -322,7 +323,7 @@ func (b *backend) ListAddressObjects(ctx context.Context, path string, req *card
 		log.Printf("error: ListContacts failed: %v", err)
 		return nil, err
 	}
-	log.Printf("debug: Found %d contacts (metadata)", total)
+	logger.Debug("Found %d contacts (metadata)", total)
 	
 	b.locker.Lock()
 	b.total = total
@@ -339,7 +340,7 @@ func (b *backend) ListAddressObjects(ctx context.Context, path string, req *card
 	failedContacts := 0
 	maxPages := 100 // Safety limit to prevent infinite loops
 	for page < maxPages {
-		log.Printf("debug: Fetching contact export page %d...", page)
+		logger.Debug("Fetching contact export page %d...", page)
 		_, contacts, err := b.c.ListContactsExport(page, 0)
 		if err != nil {
 			// Check if this was a timeout
@@ -349,7 +350,7 @@ func (b *backend) ListAddressObjects(ctx context.Context, path string, req *card
 			log.Printf("error: ListContactsExport failed on page %d: %v", page, err)
 			return nil, err
 		}
-		log.Printf("debug: Got %d contacts in export page %d", len(contacts), page)
+		logger.Debug("Got %d contacts in export page %d", len(contacts), page)
 
 		for _, contactExport := range contacts {
 			contact, ok := m[contactExport.ID]
@@ -381,7 +382,7 @@ func (b *backend) ListAddressObjects(ctx context.Context, path string, req *card
 		}
 	}
 
-	log.Printf("debug: Successfully processed %d contacts, failed to decrypt %d contacts", len(aos), failedContacts)
+	logger.Debug("Successfully processed %d contacts, failed to decrypt %d contacts", len(aos), failedContacts)
 	
 	// Check for critical failure scenario - all contacts failed to decrypt
 	if total > 0 && failedContacts == total {
@@ -392,15 +393,15 @@ func (b *backend) ListAddressObjects(ctx context.Context, path string, req *card
 }
 
 func (b *backend) QueryAddressObjects(ctx context.Context, path string, query *carddav.AddressBookQuery) ([]carddav.AddressObject, error) {
-	log.Printf("debug: QueryAddressObjects called for path: %s", path)
+	logger.Debug("QueryAddressObjects called for path: %s", path)
 	
 	req := carddav.AddressDataRequest{AllProp: true}
 	if query != nil {
 		req = query.DataRequest
-		log.Printf("debug: Query has %d PropFilters, FilterTest=%s", len(query.PropFilters), query.FilterTest)
+		logger.Debug("Query has %d PropFilters, FilterTest=%s", len(query.PropFilters), query.FilterTest)
 	}
 
-	log.Printf("debug: About to call ListAddressObjects with path: %s", addressBook.Path)
+	logger.Debug("About to call ListAddressObjects with path: %s", addressBook.Path)
 	// TODO: optimize
 	all, err := b.ListAddressObjects(ctx, addressBook.Path, &req)
 	if err != nil {
@@ -408,37 +409,37 @@ func (b *backend) QueryAddressObjects(ctx context.Context, path string, query *c
 		return nil, err
 	}
 
-	log.Printf("debug: QueryAddressObjects got %d objects", len(all))
+	logger.Debug("QueryAddressObjects got %d objects", len(all))
 	
 	// If query is nil or has no filters, return all contacts
 	// This fixes the issue where empty filter queries would return no contacts
 	if query == nil || len(query.PropFilters) == 0 {
-		log.Printf("debug: No filters specified, returning all %d objects", len(all))
+		logger.Debug("No filters specified, returning all %d objects", len(all))
 		return all, nil
 	}
 	
-	log.Printf("debug: Applying filter with %d PropFilters", len(query.PropFilters))
+	logger.Debug("Applying filter with %d PropFilters", len(query.PropFilters))
 	filtered, err := carddav.Filter(query, all)
 	if err != nil {
 		log.Printf("error: QueryAddressObjects filter failed: %v", err)
 		return nil, err
 	}
 	
-	log.Printf("debug: QueryAddressObjects returning %d filtered objects", len(filtered))
+	logger.Debug("QueryAddressObjects returning %d filtered objects", len(filtered))
 	return filtered, nil
 }
 
 func (b *backend) PutAddressObject(ctx context.Context, path string, card vcard.Card, opts *carddav.PutAddressObjectOptions) (ao *carddav.AddressObject, err error) {
-	log.Printf("debug: PutAddressObject called for path: %s", path)
+	logger.Debug("PutAddressObject called for path: %s", path)
 	id, err := parseAddressObjectPath(path)
 	if err != nil {
 		return nil, err
 	}
 
 	// Log the incoming vCard data
-	log.Printf("debug: Processing vCard with %d fields", len(card))
+	logger.Debug("Processing vCard with %d fields", len(card))
 	for k, fields := range card {
-		log.Printf("debug: vCard field %s: %d values", k, len(fields))
+		logger.Debug("vCard field %s: %d values", k, len(fields))
 	}
 
 	if b.mainAccountKey == nil {
@@ -459,24 +460,24 @@ func (b *backend) PutAddressObject(ctx context.Context, path string, card vcard.
 			return nil, err
 		}
 	} else {
-		log.Printf("debug: Creating new contact with mainAccountKey keyid=%X", b.mainAccountKey.PrimaryKey.KeyId)
+		logger.Debug("Creating new contact with mainAccountKey keyid=%X", b.mainAccountKey.PrimaryKey.KeyId)
 		resps, err := b.c.CreateContacts([]*protonmail.ContactImport{contactImport})
 		if err != nil {
 			log.Printf("error: CreateContacts API call failed: %v", err)
 			return nil, err
 		}
-		log.Printf("debug: CreateContacts returned %d responses", len(resps))
+		logger.Debug("CreateContacts returned %d responses", len(resps))
 		if len(resps) != 1 {
 			return nil, errors.New("hydroxide/carddav: expected exactly one response when creating contact")
 		}
 		resp := resps[0]
-		log.Printf("debug: Contact creation response: Code=%d, Contact=%v", resp.Response.Code, resp.Response.Contact != nil)
+		logger.Debug("Contact creation response: Code=%d, Contact=%v", resp.Response.Code, resp.Response.Contact != nil)
 		if err := resp.Err(); err != nil {
 			log.Printf("error: Contact creation failed with response error: %v (Code: %d)", err, resp.Response.Code)
 			return nil, err
 		}
 		contact = resp.Response.Contact
-		log.Printf("debug: Successfully created contact with ID: %s", contact.ID)
+		logger.Debug("Successfully created contact with ID: %s", contact.ID)
 	}
 	contact.Cards = contactImport.Cards // Not returned by the server
 
@@ -539,7 +540,7 @@ func (b *backend) receiveEvents(events <-chan *protonmail.Event) {
 }
 
 func NewHandler(c *protonmail.Client, privateKeys openpgp.EntityList, primaryKeyID uint64, events <-chan *protonmail.Event) http.Handler {
-	log.Printf("debug: NewHandler called with %d private keys", len(privateKeys))
+	logger.Debug("NewHandler called with %d private keys", len(privateKeys))
 	
 	if len(privateKeys) == 0 {
 		panic("hydroxide/carddav: no private key available")
@@ -550,13 +551,13 @@ func NewHandler(c *protonmail.Client, privateKeys openpgp.EntityList, primaryKey
 	
 	// Log details about each key and find the main account key
 	for i, entity := range privateKeys {
-		log.Printf("debug: CardDAV key %d: algorithm=%s (code=%d), keyid=%X", 
+		logger.Debug("CardDAV key %d: algorithm=%s (code=%d), keyid=%X", 
 			i, entity.PrimaryKey.PubKeyAlgo, entity.PrimaryKey.PubKeyAlgo, entity.PrimaryKey.KeyId)
 		
 		// Look for the key that matches the primary key ID from authentication
 		if entity.PrimaryKey.KeyId == primaryKeyID {
 			mainAccountKey = entity
-			log.Printf("debug: Found primary account key: algorithm=%s, keyid=%X, index=%d", 
+			logger.Debug("Found primary account key: algorithm=%s, keyid=%X, index=%d", 
 				entity.PrimaryKey.PubKeyAlgo, entity.PrimaryKey.KeyId, i)
 			break
 		}
@@ -565,16 +566,16 @@ func NewHandler(c *protonmail.Client, privateKeys openpgp.EntityList, primaryKey
 	// Fallback to first key if primary key ID not found
 	if mainAccountKey == nil {
 		mainAccountKey = privateKeys[0]
-		log.Printf("debug: Primary key ID %X not found, using first key as fallback: algorithm=%s, keyid=%X", 
+		logger.Debug("Primary key ID %X not found, using first key as fallback: algorithm=%s, keyid=%X", 
 			primaryKeyID, mainAccountKey.PrimaryKey.PubKeyAlgo, mainAccountKey.PrimaryKey.KeyId)
 	}
 	
-	log.Printf("debug: CardDAV will use main account key: algorithm=%s (code=%d), keyid=%X for contact encryption", 
+	logger.Debug("CardDAV will use main account key: algorithm=%s (code=%d), keyid=%X for contact encryption", 
 		mainAccountKey.PrimaryKey.PubKeyAlgo, mainAccountKey.PrimaryKey.PubKeyAlgo, mainAccountKey.PrimaryKey.KeyId)
 
 	// Create optimized keyring with only the main account key for CardDAV operations
 	cardDAVKeyring := openpgp.EntityList{mainAccountKey}
-	log.Printf("debug: CardDAV optimized keyring created with 1 key (reduced from %d keys)", len(privateKeys))
+	logger.Debug("CardDAV optimized keyring created with 1 key (reduced from %d keys)", len(privateKeys))
 
 	b := &backend{
 		c:              c,
